@@ -1,0 +1,14 @@
+#!/bin/bash
+if [ $1 == "-p" -a  "$#"  == 5 ]
+then 
+	if [ $3 == "-s" ]
+	then
+		python ./client.py $1 $2 $3 $4 $5
+	fi
+
+elif [ $1 == "-p" ]
+then
+	python ./client.py $1 $2 $3 $4 
+else 
+	python ./client.py $1 $2
+fi
