@@ -5,6 +5,8 @@ import ssl
 
 def main():
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0)
+
+    print "timeout:" + str(s.getsockname) + "port:" + str(s.getsockopt);
     flag = 0
     port = 27993
     if len(sys.argv[:-1]) > 2:

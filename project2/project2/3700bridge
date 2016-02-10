@@ -1,0 +1,69 @@
+#!/usr/bin/python -u    
+# The -u makes output unbuffered, so it will show up immediately
+import sys
+import socket
+import select
+import json
+import copy
+
+
+# pads the name with null bytes at the end
+def pad(name):
+    result = '\0' + name
+    while len(result) < 108:
+        result += '\0'
+    return result
+
+
+
+
+
+if __name__ == "__main__":
+    id = sys.argv[1]
+    LAN = sys.argv[2:]
+    sockets = []
+    ports = {}
+    # creates sockets and connects to them
+    for x in range(len(LAN)):
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+        s.connect(pad(LAN[x]))
+        sockets.append(s)
+        ports.update({s.fileno:s})
+
+    for soc in sockets:
+        bpdu = {'source': id, 'dest': 'ffff', 'type': 'bpdu', 'message': {'id': id, 'root': id, 'cost': 0}}
+        json_bpdu = json.dumps(bpdu)
+        soc.send(json_bpdu)
+    print "Bridge " + id + " starting up\n"
+    ignore_ports = []
+    id_list = []
+
+    # Main loop
+    while True:
+        open_sock = sockets
+        ignore_sock = []
+        # Calls select with all the sockets; change the timeout value (1)
+        ready, ignore, ignore2 = select.select(open_sock, ignore_sock, [], 1)
+        # Reads from each fo the ready sockets
+        for x in ready:
+            # parse the data in JSON
+            data = x.recv(1500)
+            json_string = json.loads(data)
+            type = json_string['type']
+            source = json_string['source']
+            dest = json_string['dest']
+            message = json_string['message']
+            msgid = message['id']
+            port = x.fileno()
+
+        if type == 'bpdu':
+            a=0
+            # open_sock.remove(x)
+            # ignore_sock.append(x)
+        else:
+            if not msgid in id_list or not port in ignore_ports:
+                id_list.append(msgid)
+                print("Received message " + str(msgid) + " on port " + str(port) + " from " + source + " to " + dest)
+                for p in ports:
+                    ports[p].sendall(json.dump(data))
+
