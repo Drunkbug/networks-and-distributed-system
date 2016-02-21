@@ -5,7 +5,8 @@ import socket
 import select
 import json
 import copy
-
+from time import time
+import threading
 
 # pads the name with null bytes at the end
 def pad(name):
@@ -13,8 +14,6 @@ def pad(name):
     while len(result) < 108:
         result += '\0'
     return result
-
-
 
 
 
@@ -30,21 +29,35 @@ if __name__ == "__main__":
         sockets.append(s)
         ports.update({s.fileno:s})
 
-    for soc in sockets:
-        bpdu = {'source': id, 'dest': 'ffff', 'type': 'bpdu', 'message': {'id': id, 'root': id, 'cost': 0}}
-        json_bpdu = json.dumps(bpdu)
-        soc.send(json_bpdu)
+    my_id = id;
+    my_cost = 0;
+    my_root = id;
     print "Bridge " + id + " starting up\n"
     ignore_ports = []
     id_list = []
-
+    forwarding_table = {}
+    bpdu_time = time()*1000
     # Main loop
     while True:
+        # check whether the bpdu is timeout by checking if the time is greater than 750ms
+        if (time()*1000 - bpdu_time) > 750:
+          my_root = id
+          my_cost = 0
+          bpdu_time = time()*1000
+
+          #boardcast bpdu to all ports 
+          for p in ports:
+            bpdu = {'source': id, 'dest': 'ffff', 'type': 'bpdu', 'message': {'id': id, 'root': my_root, 'cost': my_cost}}
+            json_bpdu = json.dumps(bpdu)
+            ports[p].sendall(json_bpdu)
+
+         
+        # Calls select with all the sockets; change the timeout value (1)
         open_sock = sockets
         ignore_sock = []
-        # Calls select with all the sockets; change the timeout value (1)
         ready, ignore, ignore2 = select.select(open_sock, ignore_sock, [], 1)
-        # Reads from each fo the ready sockets
+        
+        # Reads from each of the ready sockets
         for x in ready:
             # parse the data in JSON
             data = x.recv(1500)
@@ -54,16 +67,66 @@ if __name__ == "__main__":
             dest = json_string['dest']
             message = json_string['message']
             msgid = message['id']
-            port = x.fileno()
+            port = x.fileno
+            portNum = x.fileno()
+          
+            # if the type is bpdu, store the information of the bpdu
+            if type=='bpdu':
+              root = int(message['root'],16)
+              my_root_num = int(my_root,16)
+              cost = message['cost']
 
-        if type == 'bpdu':
-            a=0
-            # open_sock.remove(x)
-            # ignore_sock.append(x)
-        else:
-            if not msgid in id_list or not port in ignore_ports:
-                id_list.append(msgid)
-                print("Received message " + str(msgid) + " on port " + str(port) + " from " + source + " to " + dest)
+              #if needs to choose that bpdu
+              if(root < my_root_num or root == my_root and cost + 1 < my_cost):
+                print "New root: " + str(message['root'])
+                my_root = message['root']
+                my_cost = cost+1
+                ignore_sock = []
+                print "Root port: " + str(portNum)
+                #reset forwarding table
+                forwarding_table = {}
+
+                #boardcast bpdu to all ports 
                 for p in ports:
-                    ports[p].sendall(json.dump(data))
-
+                  bpdu = {'source': id, 'dest': 'ffff', 'type': 'bpdu', 'message': {'id': id, 'root': my_root, 'cost': my_cost}}
+                  json_bpdu = json.dumps(bpdu)
+                  ports[p].sendall(json_bpdu)
+              #if not(root < my_root_num or root == my_root and cost + 1 < my_cost)
+              else:
+                print "Disabled port: " + str(portNum)
+            
+            # if the type is data
+            else:
+              
+              # ignore the port
+              if (msgid in id_list) or (port in ignore_ports):
+                 continue 
+              # update forwarding table 
+              forwarding_table.update({source :  (port, portNum,time())})
+              id_list.append(msgid)
+              print("Received message " + str(msgid) + " on port " + str(portNum) + " from " + source + " to " + dest)
+              
+              # if the forwarding table consists of the destination port
+              flag = 0
+              if dest in forwarding_table:
+                dest_port, dest_portNum, added_time = forwarding_table[dest]
+                print "Designated port: " + str(dest_portNum)
+                # if the dest port is the same as source port
+                if dest_port == port:
+                  print "Not forwarding message " + str(msgid)
+                  flag = 1
+                # check forwarding table timeout
+                if time() - added_time < 5:
+                  flag = 1
+                  ports[dest_port].sendall(data)
+                  print "Forwarding message " + str(msgid) + " to port " + str(dest_portNum)
+                # if time is larger than 5 seconds  
+                else:
+                  forwarding_table.pop(dest)
+                  print "Not forwarding message " + str(msgid)
+              # if dest is not found in the forwarding table, and forwarding table is not timeout
+              if not flag:
+                #broadcast to all ports
+                print "Broadcasting message " + str(msgid) + " to all ports"
+                for p in ports:
+                  ports[p].sendall(data)
