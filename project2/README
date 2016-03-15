@@ -1,0 +1,13 @@
+Readme
+
+Language Used : Python
+
+Initially to start project2 we used the starter code in python. 
+Using that code, we made a simple bridge that generates a spanning tree 
+by broadcasting and receiving signal from host. After receiving the data, 
+we use the json to parse the message. Then, when the type
+of the message is a bpdu, the bridge compares to see the source of the port. 
+After it identifies the root port, it blocks that port and tranmits
+the message to the other ports ports that are not blocked. When the bridge 
+decides to change it's root, it will rebroadcast it's new bpdu to 
+all its ports. 

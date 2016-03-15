@@ -1,0 +1,23 @@
+CS 3700 - Networks and Distributed System Project-3 README
+
+Language used: Python
+For Project 3 we used the starter code given to us. We had to figure out how to test
+the given code. 
+
+We sent the packets with fields such as the sequence , data, checksum and eof. 
+We defaulted eof to -1 for all packets except the last one and stored Checksum 
+as a haslib. 
+
+Initially we wrote our code using json and to improve the efficiency we changed to 
+struct which was an easy decision since we had our code in python to start with. 
+To handle corrupted packets, we used the checksum field and checked the packets to
+see if they have been mangled and threw an error if it did. We also updated the RTT 
+dynamically to make it more faster by updating the RTT based on the previous
+and new RTT.
+
+The challenging part of this project was modifying our code to adapt to the struct
+library since our eof started to spout different checksums. However, we finnaly managed
+to extract the correct checksum and fixed it. 
+
+To test our protocol, we stimulated different sizes of data and checked most of our if 
+statements to make sure it handles errors properly.

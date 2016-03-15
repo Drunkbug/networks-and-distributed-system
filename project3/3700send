@@ -1,0 +1,147 @@
+#!/usr/bin/python -u
+#
+# CS3700, Spring 2015
+# Project 2 Starter Code
+#
+
+import sys
+import socket
+from time import time
+import datetime
+import struct
+from hashlib import md5
+import select
+
+#the sender class
+class Sender(object):
+    def __init__(self):
+        self.MSG_SIZE = 1500
+        self.DATA_SIZE = 1000
+        self.TIMEOUT = 30
+        self.SEQUENCE = 0
+        self.RTT = 500
+        self.ALPHA = 0.875
+        self.SENT_ALL = False
+        self.BUFFER = {}
+
+        # Bind to localhost and an ephemeral port
+        IP_PORT = sys.argv[1]
+        UDP_IP = IP_PORT[0:IP_PORT.find(":")]
+        UDP_PORT = int(IP_PORT[IP_PORT.find(":") + 1:])
+        self.dest = (UDP_IP, UDP_PORT)
+
+        # Set up the socket
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.sock.settimeout(self.TIMEOUT)
+    # write out the message with given string and time
+    def log(self, string):
+        sys.stderr.write(datetime.datetime.now().strftime("%H:%M:%S.%f") + " " + string + "\n")
+    # send the next packet
+    def send_next_packet(self):
+        timestamp = int(time() * 1000)
+        data = sys.stdin.read(self.DATA_SIZE)
+        # if it is not the end of file
+        if (len(data) > 0):
+            msg = {"sequence": self.SEQUENCE, "data": data,
+                   "checksum": md5(str(data)).hexdigest(), "eof": -1}
+            structmsg = struct.pack("!i1000s16si", self.SEQUENCE, data, md5(str(data)).hexdigest(), -1)
+            self.BUFFER[self.SEQUENCE] = {"message": msg, "currtime": timestamp, "timeout": timestamp + self.RTT * 2,
+                                          "dup": 0}
+            self.SEQUENCE += len(data)
+            # if unable to fully send packet
+            if self.sock.sendto(structmsg, self.dest) < len(structmsg):
+                self.log("[error] unable to fully send packet")
+            else:
+                self.log("[send data] " + str(self.SEQUENCE) + " (" + str(len(data)) + ")")
+            return True
+        # if it is eof
+        else:
+            msg = {"sequence": self.SEQUENCE, "data": data,
+                   "checksum": md5(str(data)).hexdigest(), "eof": self.SEQUENCE}
+            #parse the msg with sequence number, data, checksum, and eof size
+            structmsg = struct.pack("!i1000s16si", self.SEQUENCE, data, md5(str(data)).hexdigest(), self.SEQUENCE)
+            self.BUFFER[self.SEQUENCE] = {"message": msg, "currtime": timestamp,
+                                          "timeout": timestamp + 2 * self.RTT,
+                                          "dup": 0}
+            self.sock.sendto(structmsg, self.dest)
+            return False
+    # when the sender receives ack
+    def process_ack(self, data):
+
+        if (data['ack'] in self.BUFFER.keys()):
+            # update the RTT
+            self.RTT = self.RTT * self.ALPHA + \
+                       (1 - self.ALPHA) * (int(time() * 1000) - self.BUFFER[data['ack']]['currtime'])
+            del self.BUFFER[data['ack']]
+
+        if (data['dropped']):
+            if (data['dropped'] in self.BUFFER.keys()):
+                del self.BUFFER[data['dropped']]
+                self.send_next_packet()
+
+        for i in self.BUFFER.keys():
+            if i < data['ack']:
+                self.BUFFER[i]['dup'] += 1
+            if i < data['received']:
+                del self.BUFFER[i]
+    # check if any packet drops during transmit, if yes, resend
+    def is_timeout(self):
+        if len(self.BUFFER) == 0 and self.SENT_ALL:
+            return False
+
+        for i in self.BUFFER.keys():
+            if (int(time() * 1000) > self.BUFFER[i]['timeout'] or self.BUFFER[i]['dup'] >= 3):
+                structmsg = struct.pack("!i1000s16si", self.BUFFER[i]['message']['sequence'],
+                                        self.BUFFER[i]['message']['data'], self.BUFFER[i]['message']['checksum'],
+                                        self.BUFFER[i]['message']['eof'])
+                # resend
+                self.sock.sendto(structmsg, self.dest)
+                self.BUFFER[i]['timeout'] = int(time() * 1000) + 2 * self.RTT
+                self.BUFFER[i]['dup'] = 0
+            else:
+                break
+
+        return True
+
+
+if __name__ == '__main__':
+    sender = Sender()
+    # Send multiple packets to ensure it doesn't drop!
+    sender.send_next_packet()
+    sender.send_next_packet()
+    sender.send_next_packet()
+    sender.send_next_packet()
+    sender.send_next_packet()
+    sender.send_next_packet()
+    sender.send_next_packet()
+    # Now read in data, send packets
+    while True:
+        #   select the ready socket
+        ready, ignore, ingore2 = select.select([sender.sock], [], [], 0.1)
+        if (ready):
+            for socket in ready:
+                data = socket.recv(sender.MSG_SIZE)
+                decoded = struct.unpack("!i16sii", data)
+                ack, checksum, received, dropped = decoded
+                decoded = {"ack": ack, "checksum": checksum, "received": received, "dropped": dropped}
+                md = md5(str(decoded["ack"])).hexdigest()
+                #parse the first 16 chars of md5
+                md16 = md[0:16]
+                if isinstance(decoded['ack'], int) and decoded['checksum'] and \
+                                decoded['checksum'] == md16:
+
+                    # If there is an ack, send next packet
+                    if decoded['ack'] != -1:
+                        sender.log("[recv ack] " + str(decoded['ack']))
+                        sender.process_ack(decoded)
+
+                        # Try to send next packet; break if no more data
+                        if (not (sender.send_next_packet() or sender.SENT_ALL)):
+                            sender.SENT_ALL = True
+                            break
+                else:
+                    sender.log("[recv corrupt packet]")
+
+        elif (not sender.is_timeout()):
+            sender.log("[error] timeout")
+            sys.exit(-1)

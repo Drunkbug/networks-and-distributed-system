@@ -1,0 +1,118 @@
+#!/usr/bin/python -u
+#
+# CS3700, Spring 2015
+# Project 2 Starter Code
+#
+
+import sys
+import socket
+import time
+import datetime
+import os
+import struct
+# library for checksum
+from hashlib import md5
+
+# the receiver class
+class Receiver(object):
+    def __init__(self):
+        self.MSG_SIZE = 1500
+        self.TIMEOUT = 30
+        self.BUFFER = {}
+        self.SEQUENCE = 0
+        self.RECENT_ACK = 0
+        self.msg_size = 0
+
+        # Bind to localhost and an ephemeral port
+        UDP_IP = "127.0.0.1"
+        UDP_PORT = 0
+
+        # Set up the socket
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.sock.bind((UDP_IP, UDP_PORT))
+        self.sock.settimeout(self.TIMEOUT)
+    # write out the message with given string and time
+    def log(self,string):
+        sys.stderr.write(datetime.datetime.now().strftime("%H:%M:%S.%f") + " " + string + "\n")
+    # process the received data
+    def process_data(self, data):
+        # if received duplicate data
+        if (self.BUFFER.get(data['sequence'])):
+            self.log("[recv data] " + str(data['sequence']) + " (" + str(len(data['data'])) + ") DUPLCIATE")
+        else:
+            self.BUFFER[data['sequence']] = data
+            if (data['sequence'] == self.SEQUENCE):
+                self.log(
+                        "[recv data] " + str(data['sequence']) + " (" + str(
+                                len(data['data'])) + ") ACCEPTED (in-order)")
+                sys.stdout.write(data['data'])
+                self.SEQUENCE += len(data['data'])
+                while (self.BUFFER.get(self.SEQUENCE)):
+                    self.log("[recv data] " + str(self.BUFFER.get(self.SEQUENCE)['sequence']) + " (" + str(
+                            len(self.BUFFER.get(self.SEQUENCE)['data'])) + ") ACCEPTED (in-order)")
+                    sys.stdout.write(self.BUFFER.get(self.SEQUENCE)['data'])
+                    self.SEQUENCE += len(self.BUFFER.get(self.SEQUENCE)['data'])
+                # if receive completed, exit
+                if (self.SEQUENCE == self.msg_size):
+                    self.log('[recv completed]')
+                    sys.exit(0)
+            else:
+                # data arrived out of order
+                self.log(
+                        "[recv data] " + str(data['sequence']) + " (" + str(
+                            len(data['data'])) + ") QUEUED (out-of-order)")
+
+if __name__ == '__main__':
+    receiver = Receiver()
+    # Get port we bound to
+    UDP_PORT = receiver.sock.getsockname()[1]
+    receiver.log("[bound] " + str(UDP_PORT))
+    # Now listen for packets
+    while True:
+        result = receiver.sock.recvfrom(receiver.MSG_SIZE)
+
+        # If nothing is ready, we hit the timeout
+        if result:
+            (data, addr) = result
+
+            try:
+                # unpack the struct of data to sequence, data, checksum and eof
+                decoded = struct.unpack("!i1000s16si",data)
+                sequence, data, checksum, eof = decoded
+                decoded = {"sequence":sequence, "data":data,"checksum":checksum, "eof":eof}
+                # If the EOF flag is set, exit
+                if (eof != -1):
+                    structmsg = struct.pack("!i16sii", decoded['eof'],md5(str(decoded['eof'])).hexdigest(),
+                                            receiver.SEQUENCE,receiver.RECENT_ACK)
+                    receiver.RECENT_ACK = decoded['eof']
+                    receiver.log("ABOUT TO SEND " + str(receiver.SEQUENCE))
+                    receiver.sock.sendto(structmsg, addr)
+                    #if receives eof
+                    if (decoded['eof'] == receiver.SEQUENCE):
+                        receiver.log("[completed]")
+                        sys.exit(0)
+                    else:
+                        receiver.msg_size = decoded['eof']
+                # else check whether the packet corrupted or not
+                elif (('sequence' in decoded) and ('checksum' in decoded) and ('data' in decoded)):
+                    md = md5(str(decoded["data"])).hexdigest()
+                    md16 = md[0:16]
+                    if(decoded['checksum']== md16):
+                        if (decoded['data']):
+                            receiver.process_data(decoded)
+                        structmsg = struct.pack("!i16sii",decoded['sequence'],md5(str(decoded['sequence'])).hexdigest(),
+                                                receiver.SEQUENCE,receiver.RECENT_ACK)
+                        receiver.RECENT_ACK = decoded['sequence']
+                        receiver.log("ABOUT TO SEND " + str(receiver.SEQUENCE))
+                        receiver.sock.sendto(structmsg, addr)
+                    else:
+                        receiver.log("[recv corrupt packet]")
+            except (ValueError, KeyError, TypeError) as e:
+                receiver.log("[recv corrupt packet]")
+                exc_type, exc_obj, exc_tb = sys.exc_info()
+                fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+                print(exc_type, fname, exc_tb.tb_lineno)
+                raise e
+        else:
+            receiver.log("[error] timeout")
+            sys.exit(-1)
